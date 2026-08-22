@@ -9,7 +9,7 @@ http.createServer((req, res) => {
 
 function createBot() {
   const bot = mineflayer.createBot({
-    host: 'gramyreazemLdd.aternos.me:12033', // np. 'myserwer.pl' lub '123.45.67.89'
+    host: 'gramyreazemLdd.aternos.me', // np. 'myserwer.pl' lub '123.45.67.89'
     port: 12033,                // port serwera (domyślnie 25565)
     username: 'Maksioreks_afk',
     version: false               // autodetekcja wersji Minecrafta (możesz też wpisać np. '1.20.1')
