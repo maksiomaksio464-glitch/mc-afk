@@ -37,3 +37,20 @@ function createBot() {
 }
 
 createBot();
+
+const https = require('https');
+
+// Funkcja wysyłająca powiadomienie PUSH na Twój telefon
+function sendPhoneAlert(message) {
+  // Podmień moj-aternos-12033 na taką samą nazwę jak w aplikacji w telefonie:
+  const req = https.request('https://ntfy.sh/moj-aternos-12033', {
+    method: 'POST',
+  });
+  req.on('error', () => {});
+  req.write(`Aternos Alert: ${message}`);
+  req.end();
+}
+
+// Wykrycie wyłączenia serwera
+bot.on('kicked', (reason) => sendPhoneAlert(`Bot wyrzucony! Powód: ${reason}`));
+bot.on('end', () => sendPhoneAlert('Serwer Aternos został wyłączony!'));
