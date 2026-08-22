@@ -1,56 +1,65 @@
 const mineflayer = require('mineflayer');
-const http = require('http');
-
-// Serwer HTTP wymagany przez Render, aby usługa nie została uznana za uśpioną/zepsutą
-http.createServer((req, res) => {
-  res.write("Bot dziala!");
-  res.end();
-}).listen(process.env.PORT || 3000);
-
-function createBot() {
-  const bot = mineflayer.createBot({
-    host: 'gramyreazemLdd.aternos.me', // np. 'myserwer.pl' lub '123.45.67.89'
-    port: 12033,                // port serwera (domyślnie 25565)
-    username: 'Maksioreks_afk',
-    version: false               // autodetekcja wersji Minecrafta (możesz też wpisać np. '1.20.1')
-  });
-
-  bot.on('spawn', () => {
-    console.log('Bot wszedl na serwer!');
-    
-    // Pętla skakania co 5 sekund (5000 ms)
-    setInterval(() => {
-      bot.setControlState('jump', true);
-      setTimeout(() => {
-        bot.setControlState('jump', false);
-      }, 500); // puszcza klawisz skoku po połowie sekundy
-    }, 5000);
-  });
-
-  // Auto-reconnect w przypadku rozłączenia z serwerem
-  bot.on('end', () => {
-    console.log('Bot rozlaczony. Ponowne laczenie za 10 sekund...');
-    setTimeout(createBot, 10000);
-  });
-
-  bot.on('error', (err) => console.log('Blad bota:', err));
-}
-
-createBot();
-
 const https = require('https');
 
-// Funkcja wysyłająca powiadomienie PUSH na Twój telefon
+// Funkcja wysyłająca powiadomienie PUSH na telefon (ntfy.sh)
 function sendPhoneAlert(message) {
-  // Podmień moj-aternos-12033 na taką samą nazwę jak w aplikacji w telefonie:
+  // Podmień 'moj-aternos-12033' na swoją unikalną nazwę z aplikacji w telefonie:
   const req = https.request('https://ntfy.sh/moj-aternos-12033', {
     method: 'POST',
   });
-  req.on('error', () => {});
+  req.on('error', (err) => console.log('Błąd wysyłania alertu:', err.message));
   req.write(`Aternos Alert: ${message}`);
   req.end();
 }
 
-// Wykrycie wyłączenia serwera
-bot.on('kicked', (reason) => sendPhoneAlert(`Bot wyrzucony! Powód: ${reason}`));
-bot.on('end', () => sendPhoneAlert('Serwer Aternos został wyłączony!'));
+function createBot() {
+  const bot = mineflayer.createBot({
+    host: 'gramyreazemLdd.aternos.me',
+    port: 12033,
+    username: 'SkoczekBot', // Twój nick bota
+  });
+
+  bot.on('spawn', () => {
+    console.log('Bot wszedł na serwer!');
+
+    // Przemieszczenie na właściwy tryb z lobby
+    setTimeout(() => {
+      bot.chat('/survival'); 
+    }, 2000);
+
+    // Pętla skakania
+    setInterval(() => {
+      bot.setControlState('jump', true);
+      setTimeout(() => {
+        bot.setControlState('jump', false);
+      }, 400);
+    }, 5000);
+  });
+
+  // Automatyczny respawn po śmierci
+  bot.on('death', () => {
+    console.log('Bot zginął, automatyczny respawn...');
+    bot.respawn();
+  });
+
+  // TUTAJ DOPISUJEMY ALERT (wewnątrz createBot, pod zmienną 'bot'):
+  bot.on('kicked', (reason) => {
+    console.log('Bot wyrzucony:', reason);
+    sendPhoneAlert(`Bot wyrzucony z serwera! Powód: ${reason}`);
+  });
+
+  bot.on('end', () => {
+    console.log('Połączenie zerwane.');
+    sendPhoneAlert('Serwer Aternos został wyłączony lub zerwano połączenie!');
+    
+    // Ponowne łączenie za 30 sekund
+    setTimeout(createBot, 30000);
+  });
+
+  bot.on('error', (err) => {
+    console.log('Błąd bota:', err);
+  });
+}
+
+// Uruchomienie bota
+createBot();
