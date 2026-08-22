@@ -1,10 +1,19 @@
 const mineflayer = require('mineflayer');
 const https = require('https');
+const http = require('http');
+
+// 1. Prosty serwer HTTP dla Rendera (zapobiega restartom usługi)
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Bot Aternos dziala poprawnie!');
+}).listen(PORT, () => {
+  console.log(`Serwer HTTP uruchomiony na porcie ${PORT}`);
+});
 
 // Nazwa Twojego kanału w aplikacji ntfy
 const NTFY_TOPIC = 'moj-aternos-12033';
 
-// Bezpieczne czyszczenie tekstu z polskich znaków dla nagłówków HTTP
 function sanitizeHeader(text) {
   return text
     .replace(/Ł/g, 'L').replace(/ł/g, 'l')
@@ -23,7 +32,7 @@ function sendPhoneAlert(title, message) {
     method: 'POST',
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',
-      'Title': sanitizeHeader(title), // Czyszczenie tytułu zapobiega awarii Node.js
+      'Title': sanitizeHeader(title),
       'Priority': 'high'
     }
   });
@@ -33,18 +42,22 @@ function sendPhoneAlert(title, message) {
   req.end();
 }
 
+let isConnecting = false;
+
 function createBot() {
+  if (isConnecting) return;
+  isConnecting = true;
+
   console.log('Łączenie bota z serwerem...');
 
   const bot = mineflayer.createBot({
     host: 'gramyreazemLdd.aternos.me',
     port: 12033,
-    username: 'Maksioreks_afk'
-    // Usuwamy sztywną wersję – auto-detekcja po włączeniu serwera
+    username: 'SkoczekBot'
   });
 
-  // 1. Wejście na serwer
   bot.on('spawn', () => {
+    isConnecting = false;
     console.log('Bot wszedł na serwer!');
     sendPhoneAlert('Aternos: Bot Polaczony', 'Bot wszedl na serwer i rozpoczal skakanie.');
 
@@ -52,7 +65,6 @@ function createBot() {
       bot.chat('/survival');
     }, 2000);
 
-    // Skakanie co 5 sekund (anty-AFK)
     setInterval(() => {
       bot.setControlState('jump', true);
       setTimeout(() => {
@@ -61,38 +73,37 @@ function createBot() {
     }, 5000);
   });
 
-  // 2. Przeniesienie / Zmiana świata
   bot.on('respawn', () => {
     console.log('Zmiana świata lub przeniesienie na inny serwer!');
     sendPhoneAlert('Aternos: Przeniesienie', 'Bot zmienil wymiar, swiat lub zostal przeniesiony na inny sub-serwer.');
   });
 
-  // 3. Wyrzucenie / Ban / Kicked
   bot.on('kicked', (reason) => {
-    const parsedReason = typeof reason === 'object' ? JSON.stringify(reason) : reason;
+    let parsedReason = typeof reason === 'object' ? JSON.stringify(reason) : reason;
+    if (parsedReason.includes('duplicate_login')) {
+      parsedReason = 'Podwójne logowanie (bot już był na serwerze)';
+    }
     console.log('Bot wyrzucony/zabanowany:', parsedReason);
     sendPhoneAlert('Aternos: Bot Wyrzucony/Ban', `Powod: ${parsedReason}`);
   });
 
-  // 4. Rozłączenie / Wyłączenie serwera
   bot.on('end', (reason) => {
     console.log('Połączenie zerwane:', reason);
     sendPhoneAlert('Aternos: Serwer Offline', `Serwer zostal wylaczony lub zerwano polaczenie! (Powod: ${reason})`);
     
-    // Ponowne łączenie za 30 sekund
-    setTimeout(createBot, 30000);
+    setTimeout(() => {
+      isConnecting = false;
+      createBot();
+    }, 30000);
   });
 
-  // 5. Błędy połączenia / Sieci
   bot.on('error', (err) => {
     console.log('Błąd bota:', err.message);
-    // Ignorowanie błędów prób łączenia gdy serwer jest offline, by nie spamować bota
     if (!err.message.includes('ECONNREFUSED') && !err.message.includes('protocol version')) {
       sendPhoneAlert('Aternos: Blad Polaczenia', `Blad: ${err.message}`);
     }
   });
 
-  // 6. Śmierć bota w grze
   bot.on('death', () => {
     console.log('Bot zginął!');
     sendPhoneAlert('Aternos: Smierc Bota', 'Bot zginal na serwerze i wykonuje respawn.');
