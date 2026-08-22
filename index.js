@@ -39,7 +39,7 @@ function createBot() {
   const bot = mineflayer.createBot({
     host: 'gramyreazemLdd.aternos.me',
     port: 12033,
-    username: 'SkoczekBot'
+    username: 'Maksioreks_afk'
     // Usuwamy sztywną wersję – auto-detekcja po włączeniu serwera
   });
 
