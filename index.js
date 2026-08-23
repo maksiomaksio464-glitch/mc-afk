@@ -8,6 +8,7 @@ let botInstance = null;
 let isConnecting = false;
 let jumpInterval = null;
 let isJumpingEnabled = true;
+let jumpDelay = 5000; // Domyślnie skok co 5 sekund
 
 function sanitizeHeader(text) {
   return text
@@ -46,7 +47,20 @@ function startJumping(bot) {
         if (bot) bot.setControlState('jump', false);
       }, 400);
     }
-  }, 5000);
+  }, jumpDelay);
+}
+
+function digBlock(bot) {
+  if (!bot) return;
+  const target = bot.blockAtCursor(4);
+  if (!target) {
+    console.log('Brak bloku w zasięgu!');
+    return;
+  }
+  bot.dig(target, (err) => {
+    if (err) console.log('Błąd podczas kopania:', err.message);
+    else console.log(`Wykopano blok: ${target.name}`);
+  });
 }
 
 function createBot() {
@@ -58,7 +72,8 @@ function createBot() {
   const bot = mineflayer.createBot({
     host: 'gramyreazemLdd.aternos.me',
     port: 12033,
-    username: 'Maksioreks_afk'
+    username: 'Maksioreks_afk',
+    version: '1.20.1'
   });
 
   botInstance = bot;
@@ -120,7 +135,6 @@ const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
   const reqUrl = url.parse(req.url, true);
 
-  // API do sterowania botem
   if (reqUrl.pathname === '/api/control') {
     const action = reqUrl.query.action;
     const value = reqUrl.query.value;
@@ -145,7 +159,6 @@ http.createServer((req, res) => {
         break;
 
       case 'move':
-        // value: forward, back, left, right, jump
         if (value) {
           botInstance.setControlState(value, true);
           setTimeout(() => {
@@ -158,10 +171,28 @@ http.createServer((req, res) => {
         isJumpingEnabled = !isJumpingEnabled;
         break;
 
-      case 'look':
-        // obrót bota w losowym kierunku
-        const yaw = Math.random() * Math.PI * 2;
-        botInstance.look(yaw, 0);
+      case 'set_jump_delay':
+        if (value) {
+          jumpDelay = parseInt(value, 10) * 1000;
+          if (botInstance) startJumping(botInstance);
+        }
+        break;
+
+      case 'camera':
+        // zmiana kierunku patrzenia (yaw, pitch)
+        if (value && botInstance) {
+          let yaw = botInstance.entity.yaw;
+          let pitch = botInstance.entity.pitch;
+          if (value === 'left') yaw += 0.5;
+          if (value === 'right') yaw -= 0.5;
+          if (value === 'up') pitch = Math.max(-Math.PI / 2, pitch - 0.3);
+          if (value === 'down') pitch = Math.min(Math.PI / 2, pitch + 0.3);
+          botInstance.look(yaw, pitch, true);
+        }
+        break;
+
+      case 'dig':
+        if (botInstance) digBlock(botInstance);
         break;
     }
 
@@ -169,11 +200,11 @@ http.createServer((req, res) => {
     return res.end(JSON.stringify({ 
       status: 'ok', 
       isOnline: !!botInstance, 
-      jumping: isJumpingEnabled 
+      jumping: isJumpingEnabled,
+      delay: jumpDelay / 1000 
     }));
   }
 
-  // Wyświetlanie interfejsu panelu WWW
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
   res.end(`
     <!DOCTYPE html>
@@ -191,11 +222,12 @@ http.createServer((req, res) => {
         button.danger:hover { background: #a71d2a; }
         button.success { background: #28a745; }
         button.success:hover { background: #1e7e34; }
-        input { padding: 10px; width: 70%; border-radius: 6px; border: 1px solid #444; background: #222; color: white; }
-        .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; max-width: 200px; margin: 15px auto; }
+        input[type="text"] { padding: 10px; width: 65%; border-radius: 6px; border: 1px solid #444; background: #222; color: white; }
+        .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; max-width: 220px; margin: 15px auto; }
         .status { font-weight: bold; padding: 8px; border-radius: 4px; display: inline-block; margin-bottom: 15px; }
         .online { background: #28a745; }
         .offline { background: #dc3545; }
+        .slider-container { margin: 15px 0; }
       </style>
     </head>
     <body>
@@ -206,7 +238,7 @@ http.createServer((req, res) => {
         </div>
         
         <div>
-          <button class="success" onclick="send('connect')">Wjedź na serwer</button>
+          <button class="success" onclick="send('connect')">Wejdź na serwer</button>
           <button class="danger" onclick="send('quit')">Wyjdź z serwera</button>
         </div>
 
@@ -224,25 +256,56 @@ http.createServer((req, res) => {
           <button onclick="send('move', 'back')">▼ Tył</button>
           <div></div>
         </div>
-        <button onclick="send('look')">Obruć bota</button>
 
         <hr style="border-color: #333; margin: 20px 0;">
 
-        <h3>Wiądomość / Komenda</h3>
+        <h3>Kamera (Kierunek patrzenia)</h3>
+        <div class="grid">
+          <div></div>
+          <button onclick="send('camera', 'up')">Góra ▲</button>
+          <div></div>
+          <button onclick="send('camera', 'left')">◄ Lewo</button>
+          <div></div>
+          <button onclick="send('camera', 'right')">Prawo ►</button>
+          <div></div>
+          <button onclick="send('camera', 'down')">Dół ▼</button>
+          <div></div>
+        </div>
+
+        <hr style="border-color: #333; margin: 20px 0;">
+
+        <h3>Wykopywanie bloków</h3>
+        <button class="danger" onclick="send('dig')">⛏️ Wykop blok przed sobą</button>
+
+        <hr style="border-color: #333; margin: 20px 0;">
+
+        <h3>Ustawienia Skakania</h3>
+        <button onclick="send('toggle_jump')">Włącz/Wyłącz Auto-Skakanie</button>
+        <div class="slider-container">
+          <label>Odstęp skoków: <span id="delayVal">${jumpDelay / 1000}</span>s</label><br>
+          <input type="range" min="1" max="10" value="${jumpDelay / 1000}" onchange="updateDelay(this.value)">
+        </div>
+
+        <hr style="border-color: #333; margin: 20px 0;">
+
+        <h3>Wiadomość / Komenda</h3>
         <input type="text" id="chatInput" placeholder="/survival lub cześć...">
         <button onclick="sendChat()">Wyślij</button>
-
-        <hr style="border-color: #333; margin: 20px 0;">
-
-        <h3>Zadania</h3>
-        <button onclick="send('toggle_jump')">Włącz/Wyłącz Auto-Skakane</button>
       </div>
 
       <script>
         function send(action, value = '') {
           fetch('/api/control?action=' + action + '&value=' + value)
             .then(res => res.json())
-            .then(() => setTimeout(() => location.reload(), 500));
+            .then(data => {
+              if (data.delay) document.getElementById('delayVal').innerText = data.delay;
+              setTimeout(() => location.reload(), 300);
+            });
+        }
+
+        function updateDelay(val) {
+          document.getElementById('delayVal').innerText = val;
+          send('set_jump_delay', val);
         }
 
         function sendChat() {
