@@ -77,7 +77,7 @@ function createBot() {
     host: 'gramyreazemLdd.aternos.me',
     port: 12033,
     username: 'Maksioreks_afk',
-    version: '1.20.1'
+    version: '1.21.10'
   });
 
   botInstance = bot;
