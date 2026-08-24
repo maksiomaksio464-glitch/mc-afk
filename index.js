@@ -2,6 +2,7 @@ const mineflayer = require('mineflayer');
 const https = require('https');
 const http = require('http');
 const url = require('url');
+const cron = require('node-cron');
 
 const NTFY_TOPIC = 'moj-aternos-12033';
 let botInstance = null;
@@ -9,6 +10,9 @@ let isConnecting = false;
 let jumpInterval = null;
 let isJumpingEnabled = true;
 let jumpDelay = 5000; // Domyślnie skok co 5 sekund
+
+// Lista aktywnych zadań w harmonogramie
+let schedules = []; // { id, type: 'routine'|'once', time: 'HH:MM', action: 'connect'|'quit', cronTask, timeoutId }
 
 function sanitizeHeader(text) {
   return text
@@ -130,6 +134,64 @@ function createBot() {
   });
 }
 
+function disconnectBot() {
+  if (botInstance) {
+    botInstance.quit();
+    botInstance = null;
+    if (jumpInterval) clearInterval(jumpInterval);
+  }
+}
+
+// ---------------- OBSŁUGA HARMONOGRAMU ----------------
+function executeScheduleAction(action) {
+  if (action === 'connect') {
+    if (!botInstance) createBot();
+  } else if (action === 'quit') {
+    disconnectBot();
+  }
+}
+
+function addSchedule(type, time, action) {
+  const [hour, minute] = time.split(':');
+  const id = Date.now().toString();
+
+  if (type === 'routine') {
+    const cronExp = `${minute} ${hour} * * *`;
+    const task = cron.schedule(cronExp, () => {
+      console.log(`[HARMONOGRAM] Wykonywanie rutyny: ${action} o ${time}`);
+      executeScheduleAction(action);
+    });
+    schedules.push({ id, type, time, action, cronTask: task });
+  } else if (type === 'once') {
+    const now = new Date();
+    const target = new Date();
+    target.setHours(parseInt(hour, 10), parseInt(minute, 10), 0, 0);
+
+    if (target <= now) {
+      target.setDate(target.getDate() + 1); // Jeśli czas minął dzisiaj, ustaw na jutro
+    }
+
+    const delay = target.getTime() - now.getTime();
+    const timeoutId = setTimeout(() => {
+      console.log(`[HARMONOGRAM] Wykonywanie akcji jednorazowej: ${action} o ${time}`);
+      executeScheduleAction(action);
+      removeSchedule(id);
+    }, delay);
+
+    schedules.push({ id, type, time, action, timeoutId });
+  }
+}
+
+function removeSchedule(id) {
+  const index = schedules.findIndex(s => s.id === id);
+  if (index !== -1) {
+    const sched = schedules[index];
+    if (sched.cronTask) sched.cronTask.stop();
+    if (sched.timeoutId) clearTimeout(sched.timeoutId);
+    schedules.splice(index, 1);
+  }
+}
+
 // ---------------- PANEL HTTP / WWW ----------------
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
@@ -139,61 +201,68 @@ http.createServer((req, res) => {
     const action = reqUrl.query.action;
     const value = reqUrl.query.value;
 
-    if (!botInstance && action !== 'connect') {
+    if (action === 'add_schedule') {
+      const type = reqUrl.query.type; // 'once' lub 'routine'
+      const time = reqUrl.query.time; // 'HH:MM'
+      const schedAction = reqUrl.query.schedAction; // 'connect' lub 'quit'
+      if (type && time && schedAction) {
+        addSchedule(type, time, schedAction);
+      }
+    } else if (action === 'remove_schedule') {
+      if (value) removeSchedule(value);
+    } else if (!botInstance && action !== 'connect') {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ status: 'error', message: 'Bot nie jest połączony!' }));
-    }
+    } else {
+      switch (action) {
+        case 'quit':
+          disconnectBot();
+          break;
 
-    switch (action) {
-      case 'quit':
-        botInstance.quit();
-        botInstance = null;
-        break;
+        case 'connect':
+          if (!botInstance) createBot();
+          break;
 
-      case 'connect':
-        if (!botInstance) createBot();
-        break;
+        case 'chat':
+          if (value) botInstance.chat(value);
+          break;
 
-      case 'chat':
-        if (value) botInstance.chat(value);
-        break;
+        case 'move':
+          if (value) {
+            botInstance.setControlState(value, true);
+            setTimeout(() => {
+              if (botInstance) botInstance.setControlState(value, false);
+            }, 1000);
+          }
+          break;
 
-      case 'move':
-        if (value) {
-          botInstance.setControlState(value, true);
-          setTimeout(() => {
-            if (botInstance) botInstance.setControlState(value, false);
-          }, 1000);
-        }
-        break;
+        case 'toggle_jump':
+          isJumpingEnabled = !isJumpingEnabled;
+          break;
 
-      case 'toggle_jump':
-        isJumpingEnabled = !isJumpingEnabled;
-        break;
+        case 'set_jump_delay':
+          if (value) {
+            jumpDelay = parseInt(value, 10) * 1000;
+            if (botInstance) startJumping(botInstance);
+          }
+          break;
 
-      case 'set_jump_delay':
-        if (value) {
-          jumpDelay = parseInt(value, 10) * 1000;
-          if (botInstance) startJumping(botInstance);
-        }
-        break;
+        case 'camera':
+          if (value && botInstance) {
+            let yaw = botInstance.entity.yaw;
+            let pitch = botInstance.entity.pitch;
+            if (value === 'left') yaw += 0.5;
+            if (value === 'right') yaw -= 0.5;
+            if (value === 'up') pitch = Math.max(-Math.PI / 2, pitch - 0.3);
+            if (value === 'down') pitch = Math.min(Math.PI / 2, pitch + 0.3);
+            botInstance.look(yaw, pitch, true);
+          }
+          break;
 
-      case 'camera':
-        // zmiana kierunku patrzenia (yaw, pitch)
-        if (value && botInstance) {
-          let yaw = botInstance.entity.yaw;
-          let pitch = botInstance.entity.pitch;
-          if (value === 'left') yaw += 0.5;
-          if (value === 'right') yaw -= 0.5;
-          if (value === 'up') pitch = Math.max(-Math.PI / 2, pitch - 0.3);
-          if (value === 'down') pitch = Math.min(Math.PI / 2, pitch + 0.3);
-          botInstance.look(yaw, pitch, true);
-        }
-        break;
-
-      case 'dig':
-        if (botInstance) digBlock(botInstance);
-        break;
+        case 'dig':
+          if (botInstance) digBlock(botInstance);
+          break;
+      }
     }
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -204,6 +273,17 @@ http.createServer((req, res) => {
       delay: jumpDelay / 1000 
     }));
   }
+
+  // Generowanie listy zadań HTML
+  const scheduleRows = schedules.map(s => `
+    <li style="margin-bottom: 8px; text-align: left; background: #2a2a2a; padding: 6px 10px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;">
+      <span>
+        <b>${s.time}</b> - ${s.action === 'connect' ? 'Wejście' : 'Wyjście'} 
+        <small>(${s.type === 'routine' ? 'Codziennie' : 'Jednorazowo'})</small>
+      </span>
+      <button class="danger" style="padding: 2px 8px; margin: 0;" onclick="send('remove_schedule', '${s.id}')">X</button>
+    </li>
+  `).join('');
 
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
   res.end(`
@@ -222,12 +302,13 @@ http.createServer((req, res) => {
         button.danger:hover { background: #a71d2a; }
         button.success { background: #28a745; }
         button.success:hover { background: #1e7e34; }
-        input[type="text"] { padding: 10px; width: 65%; border-radius: 6px; border: 1px solid #444; background: #222; color: white; }
+        input[type="text"], input[type="time"], select { padding: 8px; border-radius: 6px; border: 1px solid #444; background: #222; color: white; margin: 3px; }
         .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; max-width: 220px; margin: 15px auto; }
         .status { font-weight: bold; padding: 8px; border-radius: 4px; display: inline-block; margin-bottom: 15px; }
         .online { background: #28a745; }
         .offline { background: #dc3545; }
         .slider-container { margin: 15px 0; }
+        ul { list-style: none; padding: 0; }
       </style>
     </head>
     <body>
@@ -241,6 +322,24 @@ http.createServer((req, res) => {
           <button class="success" onclick="send('connect')">Wejdź na serwer</button>
           <button class="danger" onclick="send('quit')">Wyjdź z serwera</button>
         </div>
+
+        <hr style="border-color: #333; margin: 20px 0;">
+
+        <h3>Harmonogram (Schedule)</h3>
+        <div style="margin-bottom: 15px;">
+          <input type="time" id="schedTime" required>
+          <select id="schedAction">
+            <option value="connect">Wejdź</option>
+            <option value="quit">Wyjdź</option>
+          </select>
+          <select id="schedType">
+            <option value="once">Jednorazowo</option>
+            <option value="routine">Rutyna (Codziennie)</option>
+          </select>
+          <br>
+          <button class="success" onclick="addSchedule()">Dodaj zadanie</button>
+        </div>
+        <ul>${scheduleRows || '<li style="color:#888;">Brak zaplanowanych zadań</li>'}</ul>
 
         <hr style="border-color: #333; margin: 20px 0;">
 
@@ -301,6 +400,16 @@ http.createServer((req, res) => {
               if (data.delay) document.getElementById('delayVal').innerText = data.delay;
               setTimeout(() => location.reload(), 300);
             });
+        }
+
+        function addSchedule() {
+          const time = document.getElementById('schedTime').value;
+          const schedAction = document.getElementById('schedAction').value;
+          const type = document.getElementById('schedType').value;
+          if (!time) return alert('Wybierz godzinę!');
+
+          fetch(\`/api/control?action=add_schedule&type=\${type}&time=\${time}&schedAction=\${schedAction}\`)
+            .then(() => setTimeout(() => location.reload(), 300));
         }
 
         function updateDelay(val) {
